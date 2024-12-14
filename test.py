@@ -1,56 +1,45 @@
 import socket
 import threading
-import time
 
-def udp_server(server_host, server_port):
-    """Simulates a UDP server that receives messages and sends a response."""
-    server_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    server_sock.bind((server_host, server_port))
-    print(f"Server listening on {server_host}:{server_port}")
+# Proxy and server addresses
+PROXY_ADDR = ("127.0.0.1", 5000)
+SERVER_ADDR = ("127.0.0.1", 6000)
+CLIENT_ADDR = ("127.0.0.1", 7000)
+
+
+def mock_server():
+    """Mock server that listens for packets from the proxy and sends a response."""
+    server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    server_socket.bind(SERVER_ADDR)
 
     while True:
-        message, client_addr = server_sock.recvfrom(1024)
-        print(f"Server received: {message.decode()} from {client_addr}")
-        response = f"Echo: {message.decode()}"
-        server_sock.sendto(response.encode(), client_addr)
+        data, addr = server_socket.recvfrom(1024)
+        print(f"Mock Server: Received '{data.decode()}' from {addr}")
+        server_socket.sendto(b"Hello from server", addr)
 
-def udp_client(proxy_host, proxy_port, message, timeout=1):
-    """Simulates a UDP client that sends a message to the proxy and waits for a response."""
-    client_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    client_sock.settimeout(timeout)
 
-    try:
-        print(f"Client sending: {message} to {proxy_host}:{proxy_port}")
-        client_sock.sendto(message.encode(), (proxy_host, proxy_port))
-        response, _ = client_sock.recvfrom(1024)
-        print(f"Client received: {response.decode()}")
-    except socket.timeout:
-        print("Client timed out waiting for a response.")
-    finally:
-        client_sock.close()
+def test_client():
+    """Simulates a client sending data to the proxy and receiving a response."""
+    client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    client_socket.bind(CLIENT_ADDR)
 
-def main():
-    server_host = "127.0.0.1"
-    proxy_host = "127.0.0.1"
-    start_port = 5000
-    end_port = 5000
-    server_base_port = 6000
+    # Send a message to the proxy
+    client_socket.sendto(b"Hello from client", PROXY_ADDR)
+    print(f"Client: Sent 'Hello from client' to proxy {PROXY_ADDR}")
 
-    # Start a server for each port in the range
-    for i in range(start_port, end_port + 1):
-        server_port = server_base_port + (i - start_port)
-        threading.Thread(target=udp_server, args=(server_host, server_port), daemon=True).start()
+    # Wait for a response from the proxy (forwarded from the server)
+    data, addr = client_socket.recvfrom(1024)
+    print(f"Client: Received '{data.decode()}' from {addr}")
 
-    # Give servers time to start
-    time.sleep(1)
+    # Verify the response
+    assert data.decode() == "Hello from server", "Test failed: Unexpected response"
+    print("Test passed!")
 
-    # Start clients for each port in the range
-    for i in range(start_port, end_port + 1):
-        message = f"Hello from client on port {i}"
-        threading.Thread(target=udp_client, args=(proxy_host, i, message), daemon=True).start()
-
-    # Keep the main thread alive to observe the results
-    time.sleep(5)
 
 if __name__ == "__main__":
-    main()
+    # Start the mock server in a separate thread
+    server_thread = threading.Thread(target=mock_server, daemon=True)
+    server_thread.start()
+
+    # Run the client test
+    test_client()
