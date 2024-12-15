@@ -1,0 +1,29 @@
+# run --help for help
+# rememebr to run in release mode `cargo run --release -- -c my_other_config.toml`
+# enable debugging `RUST_LOG=debug cargo run --release`
+
+# the default location of this file is /etc/massudpproxy.toml
+# ranges are inclusive
+
+buffer_pool_permits = 10_000 # 10,000 is the default, 
+# this is optional if packets are dropping increase the permit count
+
+# single route
+[[routes]]
+local = "127.0.0.1:3000"
+remote = "127.0.0.1:3333"
+
+
+# across range
+[[routes]]
+local_addr = "127.0.0.1"
+remote_addr = "127.0.0.1"
+local_port_range = [4000, 5501]
+remote_port_range = [5000, 6501]
+
+## across range
+[[routes]]
+local_addr = "127.0.0.1"
+remote_addr = "108.165.243.177"
+port_range = [8004, 8005]
+
