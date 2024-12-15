@@ -53,7 +53,7 @@ impl Config {
     }
 
     pub fn router(&self) -> Router {
-        let router = Router::new();
+        let mut router = Router::new();
 
         for route in &self.routes {
             match route {

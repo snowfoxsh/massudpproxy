@@ -1,32 +1,31 @@
-use dashmap::DashMap;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 
 #[derive(Debug, Default)]
 pub struct Router {
-    routes: Arc<DashMap<SocketAddr, SocketAddr>>,
+    routes: HashMap<SocketAddr, SocketAddr>,
 }
 
 #[allow(dead_code)]
 impl Router {
     pub fn new() -> Router {
         Router {
-            routes: Arc::new(DashMap::new()),
+            routes: HashMap::new(),
         }
     }
 
-    pub fn add_route(&self, input: SocketAddr, output: SocketAddr) {
+    pub fn add_route(&mut self, input: SocketAddr, output: SocketAddr) {
         self.routes.insert(input, output);
     }
 
-    pub fn route(self, input: SocketAddr, output: SocketAddr) -> Self {
+    pub fn route(mut self, input: SocketAddr, output: SocketAddr) -> Self {
         self.add_route(input, output);
         self
     }
 
     pub fn add_direct_routes<PortRange: IntoIterator<Item = u16>>(
-        &self,
+        &mut self,
         input_ip: IpAddr,
         output_ip: IpAddr,
         port_range: PortRange,
@@ -40,7 +39,7 @@ impl Router {
     }
 
     pub fn direct_routes<PortRange: IntoIterator<Item = u16>>(
-        self,
+        mut self,
         input_ip: IpAddr,
         output_ip: IpAddr,
         port_range: PortRange,
@@ -51,7 +50,7 @@ impl Router {
 
     // returns None if it is impossible
     pub fn add_offset_routes<PortRange: IntoIterator<Item = u16>>(
-        &self,
+        &mut self,
         input_ip: IpAddr,
         input_port_range: PortRange,
         output_ip: IpAddr,
@@ -78,7 +77,7 @@ impl Router {
     }
 
     pub fn offset_routes<PortRange: IntoIterator<Item = u16>>(
-        self,
+        mut self,
         input_ip: IpAddr,
         input_port_range: PortRange,
         output_ip: IpAddr,
@@ -91,14 +90,20 @@ impl Router {
     /// method that calculates the ports that need to be bound based on routes
     /// todo: rename this
     pub fn required_ports(&self) -> HashSet<u16> {
-        self.routes.iter().map(|route| route.key().port()).collect()
+        // self.routes.iter().map(|route| route.key().port()).collect()
+        self.routes.keys().map(|key| key.port()).collect()
     }
 
-    pub fn required_sockets(&self) -> HashSet<SocketAddr> {
-        self.routes.iter().map(|route| *route.key()).collect()
+    pub fn required_sockets(routes: &HashMap<SocketAddr, SocketAddr>) -> HashSet<SocketAddr> {
+    //     self.routes.iter().map(|route| *route.key()).collect()
+        routes.keys().map(|key| *key).collect()
+    }
+    
+    pub fn get_routes(&self) -> &HashMap<SocketAddr, SocketAddr> {
+        &self.routes
     }
 
-    pub fn routes(&self) -> Arc<DashMap<SocketAddr, SocketAddr>> {
-        Arc::clone(&self.routes)
+    pub fn to_routes(self) -> HashMap<SocketAddr, SocketAddr> {
+        self.routes
     }
 }

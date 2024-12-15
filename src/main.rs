@@ -9,7 +9,7 @@ use bytes::BytesMut;
 use dashmap::DashMap;
 use futures::future::join_all;
 use log::{debug, error, info, warn};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use clap::Parser;
@@ -20,6 +20,7 @@ use crate::args::Cli;
 use crate::configure::Config;
 
 use std::os::unix::io::AsRawFd;
+use crate::router::Router;
 
 /// Sets the `IP_TRANSPARENT` option for a given `UdpSocket`
 fn set_ip_transparent(socket: &UdpSocket) -> io::Result<()> {
@@ -74,7 +75,7 @@ async fn bind_sockets(addresses: HashSet<SocketAddr>) -> Vec<Arc<UdpSocket>> {
 /// - `buf_pool` is a semaphore for controlling buffer usage.
 async fn forward_task(
     socket: Arc<UdpSocket>,
-    router: Arc<DashMap<SocketAddr, SocketAddr>>,
+    router: Arc<HashMap<SocketAddr, SocketAddr>>,
     client_map: Arc<DashMap<SocketAddr, SocketAddr>>,
     buf_pool: Arc<Semaphore>,
 ) -> io::Result<()> {
@@ -164,15 +165,16 @@ async fn main() -> io::Result<()> {
         set_unlimited_resource()?;
     }
 
-    debug!("found routes: {:?}", router.routes());
+    debug!("found routes: {:?}", router.get_routes());
 
     // bind all required sockets
-    let sockets = bind_sockets(router.required_sockets()).await;
+    let sockets = bind_sockets(Router::required_sockets(router.get_routes())).await;
     debug!("bound {} sockets", sockets.len());
 
     info!("udp proxy server starting");
     // shared state
-    let router_map = router.routes(); // Arc<DashMap<SocketAddr, SocketAddr>>
+    
+    let router_map = Arc::new(router.to_routes()); // Own the rooter map. It is now immutable 
     let client_map = Arc::new(DashMap::<SocketAddr, SocketAddr>::new());
     let buf_pool = Arc::new(Semaphore::new(config.buffer_pool_permits)); // Buffer pool
 

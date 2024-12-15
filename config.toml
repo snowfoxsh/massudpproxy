@@ -7,38 +7,66 @@
 # the default location of this file is /etc/massudpproxy.toml
 # ranges are inclusive
 
-buffer_pool_permits = 10_000 # 10,000 is the default,
+#buffer_pool_permits = 10_000 # 10,000 is the default,
 # this is optional if packets are dropping increase the permit count
 
-# single route
-[[routes]]
-local = "127.0.0.1:3000"
-remote = "127.0.0.1:3333"
-
-# many single ports
-[[routes]]
-local_addr = "127.0.0.1"
-remote_addr = "127.0.0.1"
-ports = [3321, 3342, 3382, 3388]
-
-
-# many single ports
-[[routes]]
-local_addr = "127.0.0.1"
-remote_addr = "127.0.0.1"
-local_ports = [5000, 5001, 5002]
-remote_ports = [6000, 6001, 6002]
-
-# across range
-[[routes]]
-local_addr = "127.0.0.1"
-remote_addr = "127.0.0.1"
-local_port_range = [4000, 5501]
-remote_port_range = [5000, 6501]
-
+## single route
+#[[routes]]
+#local = "127.0.0.1:3000"
+#remote = "127.0.0.1:3333"
+#
+## many single ports
+#[[routes]]
+#local_addr = "127.0.0.1"
+#remote_addr = "127.0.0.1"
+#ports = [3321, 3342, 3382, 3388]
+#
+#
+## many single ports
+#[[routes]]
+#local_addr = "127.0.0.1"
+#remote_addr = "127.0.0.1"
+#local_port_range = [5000, 5001]
+#remote_port_range = [6000, 6001]
+##
 ## across range
+#[[routes]]
+#local_addr = "127.0.0.1"
+#remote_addr = "127.0.0.1"
+#local_port_range = [4000, 5501]
+#remote_port_range = [5000, 6501]
+#
+### across range
+#[[routes]]
+#local_addr = "127.0.0.1"
+#remote_addr = "108.165.243.177"
+#port_range = [8004, 8005]
+
+
+
+
+#
+## testing
+#[[routes]]
+#local_addr = "127.0.0.1"
+#remote_addr = "127.0.0.1"
+#port_range = [10_000, 10_010]
+##local_ports = [5000, 5001]
+##remote_ports = [6000, 6001]
+
+# Configuration for massudpproxy server
+buffer_pool_permits = 20_000 # Increased for higher testing load
+
+# Routes for testing
+# Local and remote port ranges for the Python script
 [[routes]]
 local_addr = "127.0.0.1"
-remote_addr = "108.165.243.177"
-port_range = [8004, 8005]
+remote_addr = "127.0.0.1"
+local_port_range = [5000, 5009]
+remote_port_range = [6000, 6009]
 
+[[routes]]
+local_addr = "127.0.0.2"
+remote_addr = "127.0.0.1"
+local_port_range = [5000, 5009]
+remote_port_range = [6000, 6009]
