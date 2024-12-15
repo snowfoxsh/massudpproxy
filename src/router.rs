@@ -48,6 +48,12 @@ impl Router {
             .collect()
     }
     
+    pub fn required_sockets(&self) -> HashSet<SocketAddr> {
+        self.routes.iter()
+            .map(|route| *route.key())
+            .collect()
+    }
+    
     pub fn routes(&self) -> Arc<DashMap<SocketAddr, SocketAddr>> {
         Arc::clone(&self.routes)
     }
