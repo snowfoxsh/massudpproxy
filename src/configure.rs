@@ -20,6 +20,11 @@ pub enum RouteConfig {
         local: SocketAddr,
         remote: SocketAddr,
     },
+    ManyPorts {
+        local_addr: IpAddr,
+        remote_addr: IpAddr,
+        ports: Vec<u16>,
+    },
     SimpleRange {
         local_addr: IpAddr,
         remote_addr: IpAddr,
@@ -43,12 +48,20 @@ impl Config {
 
     pub fn router(&self) -> Router {
         let router = Router::new();
-        
+
         for route in &self.routes {
             match route {
                 RouteConfig::SinglePort { local, remote } => {
                     router.add_route(*local, *remote);
                 }
+                RouteConfig::ManyPorts { local_addr, remote_addr, ports} => {
+                    for &port in ports {
+                        router.add_route(
+                            SocketAddr::new(*local_addr, port), 
+                            SocketAddr::new(*remote_addr, port),
+                        );
+                    }
+                },
                 RouteConfig::SimpleRange { local_addr: local, remote_addr: remote, port_range } => {
                     router.add_direct_routes( *local, *remote, port_range.clone())
                 }

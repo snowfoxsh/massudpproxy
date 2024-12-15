@@ -5,7 +5,7 @@
 # the default location of this file is /etc/massudpproxy.toml
 # ranges are inclusive
 
-buffer_pool_permits = 10_000 # 10,000 is the default, 
+buffer_pool_permits = 10_000 # 10,000 is the default,
 # this is optional if packets are dropping increase the permit count
 
 # single route
@@ -13,6 +13,11 @@ buffer_pool_permits = 10_000 # 10,000 is the default,
 local = "127.0.0.1:3000"
 remote = "127.0.0.1:3333"
 
+# many single ports
+[[routes]]
+local_addr = "127.0.0.1"
+remote_addr = "127.0.0.1"
+ports = [3321, 3342, 3382, 3388]
 
 # across range
 [[routes]]

@@ -8,8 +8,6 @@ use clap::{Parser};
 #[command(author = "Patrick Unick <dev_storm@winux.com>")]
 #[command(about = "A simple high-performance UDP proxy server", long_about = None)]
 pub struct Cli {
-    
-    
     /// Path to the configuration file
     #[arg(short, long, value_name = "FILE")]
     pub config_file: String,
