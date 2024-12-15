@@ -1,3 +1,5 @@
+use rlimit::{setrlimit, Resource};
+
 mod router;
 mod configure;
 mod port_range;
@@ -126,6 +128,10 @@ async fn forward_task(
     }
 }
 
+fn set_unlimited_resource() -> io::Result<()> {
+    // think this should work
+    setrlimit(Resource::NOFILE, rlimit::INFINITY, rlimit::INFINITY)
+}
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 10)]
 async fn main() -> io::Result<()> {
@@ -134,6 +140,11 @@ async fn main() -> io::Result<()> {
 
     let config = Config::load_file(cli.config_file).await?;
     let router = config.router();
+    
+    // by default yes
+    if cli.unlimited_resource {
+        set_unlimited_resource()?;
+    }
 
     debug!("found routes: {:?}", router.routes());
 
