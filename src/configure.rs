@@ -25,6 +25,12 @@ pub enum RouteConfig {
         remote_addr: IpAddr,
         ports: Vec<u16>,
     },
+    ManyComplexPorts {
+        local_addr: IpAddr,
+        remote_addr: IpAddr,
+        local_ports: Vec<u16>,
+        remote_ports: Vec<u16>,
+    },
     SimpleRange {
         local_addr: IpAddr,
         remote_addr: IpAddr,
@@ -62,6 +68,20 @@ impl Config {
                         );
                     }
                 },
+                RouteConfig::ManyComplexPorts { local_addr, remote_addr, local_ports, remote_ports} => {
+                    assert_eq!(
+                        local_ports.len(),
+                        remote_ports.len(),
+                        "cannot have an unequal number of local and remote ports"
+                    );
+                    
+                    for (&local_port, &remote_port) in local_ports.iter().zip(remote_ports.iter()) {
+                        router.add_route(
+                            SocketAddr::new(*local_addr, local_port),
+                            SocketAddr::new(*remote_addr, remote_port),
+                        );
+                    }
+                }
                 RouteConfig::SimpleRange { local_addr: local, remote_addr: remote, port_range } => {
                     router.add_direct_routes( *local, *remote, port_range.clone())
                 }

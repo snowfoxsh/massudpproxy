@@ -19,6 +19,14 @@ local_addr = "127.0.0.1"
 remote_addr = "127.0.0.1"
 ports = [3321, 3342, 3382, 3388]
 
+
+# many single ports
+[[routes]]
+local_addr = "127.0.0.1"
+remote_addr = "127.0.0.1"
+local_ports = [5000, 5001, 5002]
+remote_ports = [6000, 6001, 6002]
+
 # across range
 [[routes]]
 local_addr = "127.0.0.1"

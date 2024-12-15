@@ -126,16 +126,17 @@ async fn forward_task(
     }
 }
 
-#[tokio::main]
+
+#[tokio::main(flavor = "multi_thread", worker_threads = 10)]
 async fn main() -> io::Result<()> {
     env_logger::init();
     let cli = Cli::parse();
-    
+
     let config = Config::load_file(cli.config_file).await?;
     let router = config.router();
-    
+
     debug!("found routes: {:?}", router.routes());
-    
+
     // bind all required sockets
     let sockets = bind_sockets(router.required_sockets()).await;
     debug!("bound sockets: {:?}", sockets);
