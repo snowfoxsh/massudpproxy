@@ -8,6 +8,7 @@ pub struct Router {
     routes: Arc<DashMap<SocketAddr, SocketAddr>>,
 }
 
+#[allow(dead_code)]
 impl Router {
     pub fn new() -> Router {
         Router {

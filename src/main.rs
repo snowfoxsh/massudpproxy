@@ -1,8 +1,8 @@
 mod router;
 mod configure;
 mod port_range;
+mod args;
 
-use crate::router::Router;
 use bytes::BytesMut;
 use dashmap::DashMap;
 use futures::future::join_all;
@@ -10,9 +10,11 @@ use log::{debug, error, info};
 use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use clap::Parser;
 use tokio::net::UdpSocket;
 use tokio::sync::Semaphore;
 use tokio::{io, task};
+use crate::args::Cli;
 use crate::configure::Config;
 
 /// bind to all required sockets concurrently
@@ -127,20 +129,22 @@ async fn forward_task(
 #[tokio::main]
 async fn main() -> io::Result<()> {
     env_logger::init();
-    info!("udp proxy server starting");
-
-    let router = Config::load_file("config.toml").await?.router();
-
-    debug!("routes: {:?}", router.routes());
-
+    let cli = Cli::parse();
+    
+    let config = Config::load_file(cli.config_file).await?;
+    let router = config.router();
+    
+    debug!("found routes: {:?}", router.routes());
+    
     // bind all required sockets
     let sockets = bind_sockets(router.required_sockets()).await;
     debug!("bound sockets: {:?}", sockets);
 
+    info!("udp proxy server starting");
     // shared state
     let router_map = router.routes(); // Arc<DashMap<SocketAddr, SocketAddr>>
     let client_map = Arc::new(DashMap::<SocketAddr, SocketAddr>::new());
-    let buf_pool = Arc::new(Semaphore::new(128)); // Buffer pool
+    let buf_pool = Arc::new(Semaphore::new(config.buffer_pool_permits)); // Buffer pool
 
     // spawn a forwarding task for each socket
     for socket in sockets {

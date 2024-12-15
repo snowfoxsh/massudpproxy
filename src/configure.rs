@@ -1,13 +1,16 @@
 use std::net::{IpAddr, SocketAddr};
-use std::ops::Range;
 use tokio::io;
 use serde_derive::{Deserialize};
 use crate::port_range::PortRange;
 use crate::router::Router;
 
+const fn default_buffer_pool_size() -> usize { 10_000 }
+
 #[derive(Deserialize, Debug)]
 pub struct Config {
-    routes: Vec<RouteConfig>
+    #[serde(default = "default_buffer_pool_size")]
+    pub buffer_pool_permits: usize,
+    pub routes: Vec<RouteConfig>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -30,14 +33,8 @@ pub enum RouteConfig {
     }
 }
 
-// #[derive(Deserialize, Debug)]
-// struct RouteConfig {
-//     local: SocketAddr,
-//     remote: SocketAddr,
-// }
-
 impl Config {
-    pub async fn load_file(path: &str) -> io::Result<Config> {
+    pub async fn load_file(path: String) -> io::Result<Config> {
         let content = tokio::fs::read_to_string(path).await?;
         let config: Config = toml::from_str(&content)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
@@ -60,8 +57,6 @@ impl Config {
                         .expect(format!("local port range {local_port_range:?} must be the same length as remote port range {remote_port_range:?}").as_str());
                 }
             }
-
-            // router.add_route(route.local, route.remote);
         }
         
         router
