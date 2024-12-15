@@ -375,6 +375,7 @@ dependencies = [
  "dashmap",
  "env_logger",
  "futures",
+ "libc",
  "log",
  "rlimit",
  "serde",

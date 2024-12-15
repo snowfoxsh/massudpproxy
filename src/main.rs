@@ -1,4 +1,4 @@
-use rlimit::{setrlimit, Resource};
+use rlimit::{increase_nofile_limit, setrlimit, Resource};
 
 mod router;
 mod configure;
@@ -19,41 +19,54 @@ use tokio::{io, task};
 use crate::args::Cli;
 use crate::configure::Config;
 
+use std::os::unix::io::AsRawFd;
+
+/// Sets the `IP_TRANSPARENT` option for a given `UdpSocket`
+fn set_ip_transparent(socket: &UdpSocket) -> io::Result<()> {
+    let fd = socket.as_raw_fd();
+    let opt_val: libc::c_int = 1;
+
+    unsafe {
+        let result = libc::setsockopt(
+            fd,
+            libc::SOL_IP,
+            libc::IP_TRANSPARENT,
+            &opt_val as *const _ as *const libc::c_void,
+            std::mem::size_of_val(&opt_val) as libc::socklen_t,
+        );
+        if result != 0 {
+            return Err(io::Error::last_os_error());
+        }
+    }
+
+    Ok(())
+}
+
+
 /// bind to all required sockets concurrently
-async fn bind_sockets(socket_addrs: HashSet<SocketAddr>) -> Vec<Arc<UdpSocket>> {
-    let tasks: Vec<_> = socket_addrs
-        .into_iter()
-        .map(|addr| {
-            let addr_clone = addr.clone();
-            task::spawn(async move {
-                debug!("attempting to bind to socket: {}", addr_clone);
-                match UdpSocket::bind(addr_clone).await {
-                    Ok(socket) => Ok(Arc::new(socket)),
-                    Err(error) => Err((addr_clone, error)),
+async fn bind_sockets(addresses: HashSet<SocketAddr>) -> Vec<Arc<UdpSocket>> {
+    let mut sockets = Vec::new();
+
+    for addr in addresses {
+        match UdpSocket::bind(addr).await {
+            Ok(socket) => {
+                if let Err(e) = set_ip_transparent(&socket) {
+                    warn!("Failed to set IP_TRANSPARENT on {}: {}", addr, e);
+                } else {
+                    debug!("IP_TRANSPARENT set for {}", addr);
                 }
-            })
-        })
-        .collect();
 
-    let results = join_all(tasks).await;
-    let mut bound_sockets = Vec::new();
-
-    for task_result in results {
-        match task_result {
-            Ok(Ok(socket)) => {
-                bound_sockets.push(socket);
+                sockets.push(Arc::new(socket));
             }
-            Ok(Err((addr, error))) => {
-                error!("failed to bind to socket: {} > {}", addr, error);
-            }
-            Err(join_error) => {
-                error!("bind task failed with error > {}", join_error);
+            Err(e) => {
+                error!("Failed to bind socket on {}: {}", addr, e);
             }
         }
     }
 
-    bound_sockets
+    sockets
 }
+
 
 /// handles forwarding packets for a given socket
 /// - `router` gives static routes from local address to remote.
@@ -130,12 +143,17 @@ async fn forward_task(
 
 fn set_unlimited_resource() -> io::Result<()> {
     // think this should work
-    setrlimit(Resource::NOFILE, rlimit::INFINITY, rlimit::INFINITY)
+    info!("increase_nofile_limit reported: {}", increase_nofile_limit(u64::MAX - 1)?);
+    Ok(())
 }
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 10)]
 async fn main() -> io::Result<()> {
-    env_logger::init();
+    // env_logger::init();
+    env_logger::Builder::new()
+        .filter_level(log::LevelFilter::Debug)
+        .init();
+    
     let cli = Cli::parse();
 
     let config = Config::load_file(cli.config_file).await?;
@@ -150,7 +168,7 @@ async fn main() -> io::Result<()> {
 
     // bind all required sockets
     let sockets = bind_sockets(router.required_sockets()).await;
-    debug!("bound sockets: {:?}", sockets);
+    debug!("bound {} sockets", sockets.len());
 
     info!("udp proxy server starting");
     // shared state
