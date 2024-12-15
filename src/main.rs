@@ -1,16 +1,16 @@
 mod router;
 
+use crate::router::Router;
+use bytes::BytesMut;
+use dashmap::DashMap;
+use futures::future::join_all;
+use log::{debug, error, info};
 use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use futures::future::join_all;
-use log::{debug, error, info};
-use tokio::{io, task};
 use tokio::net::UdpSocket;
-use crate::router::Router;
 use tokio::sync::Semaphore;
-use bytes::BytesMut;
-use dashmap::DashMap;
+use tokio::{io, task};
 
 /// bind to all required sockets concurrently
 async fn bind_sockets(socket_addrs: HashSet<SocketAddr>) -> Vec<Arc<UdpSocket>> {
@@ -127,9 +127,18 @@ async fn main() -> io::Result<()> {
 
     // create our router manager
     let router = Router::new()
-        .route("127.0.0.1:5000".parse().unwrap(), "127.0.0.1:6000".parse().unwrap())
-        .route("127.0.0.1:5001".parse().unwrap(), "127.0.0.1:6001".parse().unwrap());
-        // .direct_routes("127.0.0.1".parse().unwrap(), "127.0.0.1".parse().unwrap(), 5001..=5010);
+        .route(
+            "127.0.0.1:5001".parse().unwrap(),
+            "192.168.181.222:6001".parse().unwrap(),
+        )
+        .route(
+            "127.0.0.1:5000".parse().unwrap(),
+            "127.0.0.1:6000".parse().unwrap(),
+        )
+        .route(
+            "127.0.0.1:5001".parse().unwrap(),
+            "127.0.0.1:6001".parse().unwrap(),
+        );
 
     debug!("routes: {:?}", router.routes());
 
