@@ -24,13 +24,13 @@ impl Router {
         self
     }
 
-    pub fn add_direct_routes<PortRange: Iterator<Item = u16>>(
+    pub fn add_direct_routes<PortRange: IntoIterator<Item = u16>>(
         &self,
         input_ip: IpAddr,
         output_ip: IpAddr,
         port_range: PortRange,
     ) {
-        port_range.for_each(|port: u16| {
+        port_range.into_iter().for_each(|port: u16| {
             self.add_route(
                 SocketAddr::new(input_ip, port),
                 SocketAddr::new(output_ip, port),
@@ -38,7 +38,7 @@ impl Router {
         });
     }
 
-    pub fn direct_routes<PortRange: Iterator<Item = u16>>(
+    pub fn direct_routes<PortRange: IntoIterator<Item = u16>>(
         self,
         input_ip: IpAddr,
         output_ip: IpAddr,
@@ -49,7 +49,7 @@ impl Router {
     }
 
     // returns None if it is impossible
-    pub fn add_offset_routes<PortRange: Iterator<Item = u16>>(
+    pub fn add_offset_routes<PortRange: IntoIterator<Item = u16>>(
         &self,
         input_ip: IpAddr,
         input_port_range: PortRange,
@@ -57,8 +57,8 @@ impl Router {
         output_port_range: PortRange,
     ) -> Option<()> {
         // Use iterators to simultaneously iterate over both port ranges
-        let mut input_ports = input_port_range;
-        let mut output_ports = output_port_range;
+        let mut input_ports = input_port_range.into_iter();
+        let mut output_ports = output_port_range.into_iter();
 
         loop {
             match (input_ports.next(), output_ports.next()) {
@@ -76,7 +76,7 @@ impl Router {
         Some(())
     }
 
-    pub fn offset_routes<PortRange: Iterator<Item = u16>>(
+    pub fn offset_routes<PortRange: IntoIterator<Item = u16>>(
         self,
         input_ip: IpAddr,
         input_port_range: PortRange,

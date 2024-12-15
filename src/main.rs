@@ -1,4 +1,5 @@
 mod router;
+mod configure;
 
 use crate::router::Router;
 use bytes::BytesMut;
@@ -124,6 +125,7 @@ async fn forward_task(
 #[tokio::main]
 async fn main() -> io::Result<()> {
     env_logger::init();
+    info!("udp proxy server starting");
 
     // create our router manager
     let router = Router::new()
@@ -144,7 +146,7 @@ async fn main() -> io::Result<()> {
 
     // bind all required sockets
     let sockets = bind_sockets(router.required_sockets()).await;
-    debug!("Bound sockets: {:?}", sockets);
+    debug!("bound sockets: {:?}", sockets);
 
     // shared state
     let router_map = router.routes(); // Arc<DashMap<SocketAddr, SocketAddr>>
@@ -163,7 +165,7 @@ async fn main() -> io::Result<()> {
         });
     }
 
-    // The main task can now wait forever, or implement a shutdown mechanism
+    // the main task can now wait forever
     loop {
         tokio::time::sleep(std::time::Duration::from_secs(60)).await;
     }
