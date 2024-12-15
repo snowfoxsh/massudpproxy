@@ -8,7 +8,7 @@ mod args;
 use bytes::BytesMut;
 use dashmap::DashMap;
 use futures::future::join_all;
-use log::{debug, error, info};
+use log::{debug, error, info, warn};
 use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -78,7 +78,7 @@ async fn forward_task(
         let (len, src_addr) = match socket.recv_from(&mut buf).await {
             Ok(res) => res,
             Err(e) => {
-                error!("Error receiving from {}: {}", local_addr, e);
+                warn!("Error receiving from {}: {}", local_addr, e);
                 continue;
             }
         };
@@ -101,7 +101,7 @@ async fn forward_task(
                 if let Some(client_addr) = client_map.get(&src_addr) {
                     // forward to client
                     if let Err(e) = socket.send_to(&buf, *client_addr).await {
-                        error!("Error forwarding server->client: {}", e);
+                        warn!("Error forwarding server->client: {}", e);
                     }
                 } else {
                     // no client mapping found; ignore or log
@@ -165,7 +165,7 @@ async fn main() -> io::Result<()> {
         let buf_pool = Arc::clone(&buf_pool);
         tokio::spawn(async move {
             if let Err(e) = forward_task(socket, router_map, client_map, buf_pool).await {
-                error!("Forward task error: {}", e);
+                warn!("Forward task error: {}", e);
             }
         });
     }
