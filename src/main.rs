@@ -1,5 +1,6 @@
 mod router;
 mod configure;
+mod port_range;
 
 use crate::router::Router;
 use bytes::BytesMut;
@@ -12,6 +13,7 @@ use std::sync::Arc;
 use tokio::net::UdpSocket;
 use tokio::sync::Semaphore;
 use tokio::{io, task};
+use crate::configure::Config;
 
 /// bind to all required sockets concurrently
 async fn bind_sockets(socket_addrs: HashSet<SocketAddr>) -> Vec<Arc<UdpSocket>> {
@@ -127,20 +129,7 @@ async fn main() -> io::Result<()> {
     env_logger::init();
     info!("udp proxy server starting");
 
-    // create our router manager
-    let router = Router::new()
-        .route(
-            "127.0.0.1:5001".parse().unwrap(),
-            "192.168.181.222:6001".parse().unwrap(),
-        )
-        .route(
-            "127.0.0.1:5000".parse().unwrap(),
-            "127.0.0.1:6000".parse().unwrap(),
-        )
-        .route(
-            "127.0.0.1:5001".parse().unwrap(),
-            "127.0.0.1:6001".parse().unwrap(),
-        );
+    let router = Config::load_file("config.toml").await?.router();
 
     debug!("routes: {:?}", router.routes());
 
