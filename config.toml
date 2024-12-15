@@ -60,13 +60,14 @@ buffer_pool_permits = 20_000 # Increased for higher testing load
 # Routes for testing
 # Local and remote port ranges for the Python script
 [[routes]]
-local_addr = "127.0.0.1"
+local_addr = "127.0.0.2"
 remote_addr = "127.0.0.1"
 local_port_range = [5000, 5009]
 remote_port_range = [6000, 6009]
 
 [[routes]]
-local_addr = "127.0.0.2"
+local_addr = "127.0.0.1"
 remote_addr = "127.0.0.1"
 local_port_range = [5000, 5009]
 remote_port_range = [6000, 6009]
+

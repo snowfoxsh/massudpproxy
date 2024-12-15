@@ -25,6 +25,7 @@ RECV_TIMEOUT = 2
 dropped_ports = threading.Lock()
 dropped_ports_list = []
 
+
 def mock_server(server_addr):
     """Mock server listening on server_addr and responding to every packet."""
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -42,7 +43,7 @@ def mock_server(server_addr):
 
 
 def test_client(proxy_addr, server_addr, local_addr, port_range, packets_to_send):
-    """Client sends packets to a range of ports and logs dropped ports."""
+    """Client sends packets to a range of ports and logs dropped packets."""
     for port in port_range:
         client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         client_socket.bind((local_addr, port))
@@ -59,13 +60,13 @@ def test_client(proxy_addr, server_addr, local_addr, port_range, packets_to_send
                 resp = data.decode()
                 print(f"Client {local_addr}:{port}: Received '{resp}' from {addr}")
             except socket.timeout:
-                print(f"Client {local_addr}:{port}: No response for packet#{i}")
+                print(f"Client {local_addr}:{port}: No response for packet#{i} (to proxy {proxy_addr})")
                 dropped = True
                 break
 
         if dropped:
             with dropped_ports:
-                dropped_ports_list.append(port)
+                dropped_ports_list.append((local_addr, port, f"to proxy {proxy_addr}"))
 
         client_socket.close()
 
@@ -96,10 +97,12 @@ if __name__ == "__main__":
     for t in client_threads:
         t.join()
 
-    # Log dropped ports
+    # Log dropped ports with addresses and directions
     if dropped_ports_list:
-        print(f"\nDropped Ports: {sorted(set(dropped_ports_list))}")
+        print("\nDropped Packets:")
+        for addr, port, direction in sorted(dropped_ports_list):
+            print(f"Local Address: {addr}, Port: {port}, Direction: {direction}")
     else:
-        print("\nNo ports were dropped.")
+        print("\nNo packets were dropped.")
 
     print("All tests completed successfully.")
