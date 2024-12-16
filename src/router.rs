@@ -1,22 +1,24 @@
 use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, SocketAddr};
-use std::sync::Arc;
 
 #[derive(Debug, Default)]
 pub struct Router {
-    routes: HashMap<SocketAddr, SocketAddr>,
+    forward_routes: HashMap<SocketAddr, SocketAddr>, // Maps input -> output
+    backward_routes: HashMap<SocketAddr, SocketAddr>, // Maps output -> input
 }
 
 #[allow(dead_code)]
 impl Router {
     pub fn new() -> Router {
         Router {
-            routes: HashMap::new(),
+            forward_routes: HashMap::new(),
+            backward_routes: HashMap::new(),
         }
     }
 
     pub fn add_route(&mut self, input: SocketAddr, output: SocketAddr) {
-        self.routes.insert(input, output);
+        self.forward_routes.insert(input, output);
+        self.backward_routes.insert(output, input);
     }
 
     pub fn route(mut self, input: SocketAddr, output: SocketAddr) -> Self {
@@ -48,7 +50,6 @@ impl Router {
         self
     }
 
-    // returns None if it is impossible
     pub fn add_offset_routes<PortRange: IntoIterator<Item = u16>>(
         &mut self,
         input_ip: IpAddr,
@@ -56,7 +57,6 @@ impl Router {
         output_ip: IpAddr,
         output_port_range: PortRange,
     ) -> Option<()> {
-        // Use iterators to simultaneously iterate over both port ranges
         let mut input_ports = input_port_range.into_iter();
         let mut output_ports = output_port_range.into_iter();
 
@@ -68,8 +68,8 @@ impl Router {
                         SocketAddr::new(output_ip, output_port),
                     );
                 }
-                (None, None) => break, // both ranges are fully iterated
-                _ => return None,      // mismatched range lengths
+                (None, None) => break, // Both ranges are fully iterated
+                _ => return None,      // Mismatched range lengths
             }
         }
 
@@ -87,23 +87,26 @@ impl Router {
         Some(self)
     }
 
-    /// method that calculates the ports that need to be bound based on routes
-    /// todo: rename this
     pub fn required_ports(&self) -> HashSet<u16> {
-        // self.routes.iter().map(|route| route.key().port()).collect()
-        self.routes.keys().map(|key| key.port()).collect()
+        self.forward_routes.keys().map(|key| key.port()).collect()
     }
 
     pub fn required_sockets(routes: &HashMap<SocketAddr, SocketAddr>) -> HashSet<SocketAddr> {
-    //     self.routes.iter().map(|route| *route.key()).collect()
-        routes.keys().map(|key| *key).collect()
-    }
-    
-    pub fn get_routes(&self) -> &HashMap<SocketAddr, SocketAddr> {
-        &self.routes
+        routes.keys().cloned().collect()
     }
 
-    pub fn to_routes(self) -> HashMap<SocketAddr, SocketAddr> {
-        self.routes
+    pub fn get_forward_routes(&self) -> &HashMap<SocketAddr, SocketAddr> {
+        &self.forward_routes
+    }
+
+    pub fn get_backward_routes(&self) -> &HashMap<SocketAddr, SocketAddr> {
+        &self.backward_routes
+    }
+    
+    pub fn to_forward_backward_routes(self) -> (HashMap<SocketAddr, SocketAddr>, HashMap<SocketAddr, SocketAddr>) {
+        (
+            self.forward_routes,
+            self.backward_routes
+        )
     }
 }

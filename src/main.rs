@@ -45,48 +45,59 @@ fn set_ip_transparent(socket: &UdpSocket) -> io::Result<()> {
 
 
 /// bind to all required sockets concurrently
-async fn bind_sockets(addresses: HashSet<SocketAddr>) -> Vec<Arc<UdpSocket>> {
-    let mut sockets = Vec::new();
 
-    for addr in addresses {
-        match UdpSocket::bind(addr).await {
-            Ok(socket) => {
-                if let Err(e) = set_ip_transparent(&socket) {
-                    warn!("Failed to set IP_TRANSPARENT on {}: {}", addr, e);
-                } else {
-                    debug!("IP_TRANSPARENT set for {}", addr);
+/// bind to all required sockets concurrently
+async fn bind_sockets(socket_addrs: HashSet<SocketAddr>) -> Vec<Arc<UdpSocket>> {
+    let tasks: Vec<_> = socket_addrs
+        .into_iter()
+        .map(|addr| {
+            let addr_clone = addr.clone();
+            task::spawn(async move {
+                debug!("attempting to bind to socket: {}", addr_clone);
+                match UdpSocket::bind(addr_clone).await {
+                    Ok(socket) => Ok(Arc::new(socket)),
+                    Err(error) => Err((addr_clone, error)),
                 }
+            })
+        })
+        .collect();
 
-                sockets.push(Arc::new(socket));
+    let results = join_all(tasks).await;
+    let mut bound_sockets = Vec::new();
+
+    for task_result in results {
+        match task_result {
+            Ok(Ok(socket)) => {
+                bound_sockets.push(socket);
             }
-            Err(e) => {
-                error!("Failed to bind socket on {}: {}", addr, e);
+            Ok(Err((addr, error))) => {
+                error!("failed to bind to socket: {} > {}", addr, error);
+            }
+            Err(join_error) => {
+                error!("bind task failed with error > {}", join_error);
             }
         }
     }
 
-    sockets
+    bound_sockets
 }
 
 
+
 /// handles forwarding packets for a given socket
-/// - `router` gives static routes from local address to remote.
-/// - `client_map` tracks client <-> server pairs.
-/// - `buf_pool` is a semaphore for controlling buffer usage.
 async fn forward_task(
     socket: Arc<UdpSocket>,
-    router: Arc<HashMap<SocketAddr, SocketAddr>>,
-    client_map: Arc<DashMap<SocketAddr, SocketAddr>>,
+    forward_routes: Arc<HashMap<SocketAddr, SocketAddr>>,
+    backward_routes: Arc<HashMap<SocketAddr, SocketAddr>>,
     buf_pool: Arc<Semaphore>,
 ) -> io::Result<()> {
     let local_addr = socket.local_addr()?;
     info!("Listening on {}", local_addr);
 
     loop {
-        // acquire a buffer permit
+        // Acquire a buffer permit
         let _permit = buf_pool.acquire().await.unwrap();
         let mut buf = BytesMut::with_capacity(64 * 1024);
-        // ensure the buffer has some initial capacity
         buf.resize(64 * 1024, 0);
 
         let (len, src_addr) = match socket.recv_from(&mut buf).await {
@@ -96,51 +107,40 @@ async fn forward_task(
                 continue;
             }
         };
+        
+        // 16 entries
+        
+        debug!("Received ");
 
         buf.truncate(len);
 
-        // determine if this is a client->server or server->client packet
-        // if incoming packet source isn't one of our known routes,
-        // this likely is client->server traffic.
-
-        // check if local_addr matches a known route
-        if let Some(server_addr) = router.get(&local_addr) {
-            // we have a defined route: local_addr -> server_addr.value()
-
-            // is this packet coming from the server side or the client side?
-            // ff src_addr == server_addr, then its server->client
-            // otherwise it's client->server
-            if src_addr == *server_addr {
-                // server->client direction
-                if let Some(client_addr) = client_map.get(&src_addr) {
-                    // forward to client
-                    if let Err(e) = socket.send_to(&buf, *client_addr).await {
-                        warn!("Error forwarding server->client: {}", e);
+        // Determine packet direction (local -> remote or remote -> local)
+        if let Some(remote_addr) = forward_routes.get(&local_addr) {
+            if src_addr == *remote_addr {
+                // Packet is remote -> local
+                if let Some(local_addr) = backward_routes.get(remote_addr) {
+                    // Forward to the local address
+                    if let Err(e) = socket.send_to(&buf, *local_addr).await {
+                        warn!("Error forwarding remote -> local packet: {}", e);
                     }
                 } else {
-                    // no client mapping found; ignore or log
-                    debug!("No client found for server {} response", src_addr);
+                    debug!(
+                        "No matching local route for remote response from {}",
+                        src_addr
+                    );
                 }
             } else {
-                // client->server direction
-                // store the mapping both ways:
-                // client_addr -> server_addr
-                client_map.insert(src_addr, *server_addr);
-
-                // also store server_addr -> client_addr for reverse lookup
-                client_map.insert(*server_addr, src_addr);
-
-                // forward to server
-                if let Err(e) = socket.send_to(&buf, *server_addr).await {
-                    error!("Error forwarding client->server: {}", e);
+                // Packet is local -> remote
+                if let Err(e) = socket.send_to(&buf, *remote_addr).await {
+                    error!("Error forwarding local -> remote packet: {}", e);
                 }
             }
         } else {
-            // no route found for this local_addr, ignore or log
-            debug!("No route configured for local_addr: {}", local_addr);
+            debug!("No route found for local address: {}", local_addr);
         }
     }
 }
+
 
 fn set_unlimited_resource() -> io::Result<()> {
     // think this should work
@@ -165,26 +165,31 @@ async fn main() -> io::Result<()> {
         set_unlimited_resource()?;
     }
 
-    debug!("found routes: {:?}", router.get_routes());
+    debug!("found routes: forward: {}, backwards: {}", router.get_forward_routes().len(), router.get_backward_routes().len());
 
     // bind all required sockets
-    let sockets = bind_sockets(Router::required_sockets(router.get_routes())).await;
+    let sockets = bind_sockets(Router::required_sockets(router.get_forward_routes())).await;
     debug!("bound {} sockets", sockets.len());
 
     info!("udp proxy server starting");
     // shared state
+
+    // let router_map = Arc::new(router.to_routes()); // Own the rooter map. It is now immutable
     
-    let router_map = Arc::new(router.to_routes()); // Own the rooter map. It is now immutable 
-    let client_map = Arc::new(DashMap::<SocketAddr, SocketAddr>::new());
+    let (forwards_routes, backwards_routes) = router.to_forward_backward_routes();
+    let (forwards_routes, backwards_routes) = (Arc::new(forwards_routes), Arc::new(backwards_routes));
+    
+    // let client_map = Arc::new(DashMap::<SocketAddr, SocketAddr>::new());
     let buf_pool = Arc::new(Semaphore::new(config.buffer_pool_permits)); // Buffer pool
 
     // spawn a forwarding task for each socket
     for socket in sockets {
-        let router_map = Arc::clone(&router_map);
-        let client_map = Arc::clone(&client_map);
+        let forwards_routes = Arc::clone(&forwards_routes);
+        let backwards_routes = Arc::clone(&forwards_routes);
+        // let client_map = Arc::clone(&client_map);
         let buf_pool = Arc::clone(&buf_pool);
         tokio::spawn(async move {
-            if let Err(e) = forward_task(socket, router_map, client_map, buf_pool).await {
+            if let Err(e) = forward_task(socket, forwards_routes, backwards_routes, buf_pool).await {
                 warn!("Forward task error: {}", e);
             }
         });
