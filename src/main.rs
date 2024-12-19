@@ -1,25 +1,27 @@
 use rlimit::{increase_nofile_limit, setrlimit, Resource};
 
-mod router;
+mod args;
 mod configure;
 mod port_range;
-mod args;
+mod router;
 
+use crate::args::Cli;
+use crate::configure::Config;
 use bytes::BytesMut;
+use clap::Parser;
 use dashmap::DashMap;
 use futures::future::join_all;
 use log::{debug, error, info, warn};
 use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
-use std::net::{SocketAddr, UdpSocket as DontUseUdpSocket};
+use std::net::{SocketAddr, UdpSocket as _DontUseUdpSocket};
+use std::ops::Deref;
 use std::sync::Arc;
-use clap::Parser;
-use tokio::net::UdpSocket;
+use tokio::net::{ToSocketAddrs, UdpSocket};
 use tokio::sync::Semaphore;
 use tokio::{io, task};
-use crate::args::Cli;
-use crate::configure::Config;
 
+use dashmap::mapref::one::Ref;
 use std::os::unix::io::AsRawFd;
 use tokio::io::Interest;
 // use crate::router::Router;
@@ -44,7 +46,6 @@ fn set_ip_transparent(socket: &UdpSocket) -> io::Result<()> {
 
     Ok(())
 }
-
 
 /// bind to all required sockets concurrently
 
@@ -84,8 +85,6 @@ async fn bind_sockets(socket_addrs: HashSet<SocketAddr>) -> Vec<Arc<UdpSocket>> 
     bound_sockets
 }
 
-
-
 /// handles forwarding packets for a given socket
 async fn forward_task(
     socket: Arc<UdpSocket>,
@@ -109,9 +108,9 @@ async fn forward_task(
                 continue;
             }
         };
-        
+
         // 16 entries
-        
+
         debug!("Received ");
 
         buf.truncate(len);
@@ -143,17 +142,19 @@ async fn forward_task(
     }
 }
 
-
 fn set_unlimited_resource() -> io::Result<()> {
     // think this should work
-    info!("increase_nofile_limit reported: {}", increase_nofile_limit(u64::MAX - 1)?);
+    info!(
+        "increase_nofile_limit reported: {}",
+        increase_nofile_limit(u64::MAX - 1)?
+    );
     Ok(())
 }
 
 struct Connection {
-    remote_sock: UdpSocket, 
+    remote_sock: UdpSocket,
     send_to: SocketAddr,
-    
+
     local_sock: Arc<UdpSocket>,
     receive_from: SocketAddr,
     // maybe store a ref to the buffer pool
@@ -161,13 +162,13 @@ struct Connection {
 }
 
 impl Connection {
-    async fn new(send_to: SocketAddr, local_sock: Arc<UdpSocket>) -> io::Result<Connection> {
+    async fn new( local_sock: Arc<UdpSocket>,send_to: SocketAddr) -> io::Result<Connection> {
         // get the address of the local socket
         // tiny bit of unnecessary overhead here
-        let receive_from = local_sock.local_addr()?; 
-        
+        let receive_from = local_sock.local_addr()?;
+
         // todo: maybe specify a way in the config to send from particular socket
-        // bind the output socket; we dont care where it comes from 
+        // bind the output socket; we dont care where it comes from
         let remote_sock = UdpSocket::bind("0.0.0.0:0").await?;
 
         Ok(Connection {
@@ -178,57 +179,121 @@ impl Connection {
             local_sock,
         })
     }
+
+    async fn send(&self, bytes: &[u8]) -> io::Result<usize> {
+        self.remote_sock.send_to(bytes, self.send_to).await
+    }
 }
 
 struct Socket {
     // Arc<T> because we need to share to timeout thread
-    active: Arc<HashMap<SocketAddr, Arc<Connection>>>, // active connections to the socket
-    routes: HashMap<SocketAddr, SocketAddr>, // C:x -> S:y
-    pub socket: Arc<UdpSocket>
+    active: Arc<DashMap<SocketAddr, Arc<Connection>>>, // active connections to the socket
+    routes: DashMap<SocketAddr, SocketAddr>,           // C:x -> S:y
+    socket: Arc<UdpSocket>,
 }
 
 impl Socket {
-    pub async fn bind(addr: SocketAddr) -> io::Result<Socket> {
+    pub async fn bind<A: ToSocketAddrs>(addr: A) -> io::Result<Socket> {
         let socket = UdpSocket::bind(addr).await?;
         let socket = Arc::new(socket);
 
         Ok(Self {
             socket,
-            active: Arc::new(HashMap::new()),
-            routes: HashMap::new(), // start with empty routing table
+            active: Arc::new(DashMap::new()),
+            routes: DashMap::new(), // start with empty routing table
         })
     }
-    
-    pub fn add_route(&mut self, from_addr: SocketAddr, to_addr: SocketAddr) {
+
+    pub fn add_route<A: Into<SocketAddr>>(&mut self, from_addr: A, to_addr: A) {
         // create the route
-        self.routes.insert(from_addr, to_addr);
+        self.routes.insert(from_addr.into(), to_addr.into());
     }
-    
+
     pub fn route(mut self, from_addr: SocketAddr, to_addr: SocketAddr) -> Self {
         self.add_route(from_addr, to_addr);
         self
     }
+
+    pub fn socket(&self) -> &UdpSocket {
+        self.socket.as_ref()
+    }
+
+    pub fn solve_route(&self, addr: &SocketAddr) -> Option<Ref<'_, SocketAddr, SocketAddr>> {
+        self.routes.get(addr)
+    }
+
+    pub async fn send(&self, sent_from: SocketAddr, bytes: &[u8]) -> io::Result<()> {
+        // lookup the correct route
+        // if: no route
+        // then: drop the packet
+        // find connection
+        // if: no connection
+        // then: create connection
+        // send from connection socket
+
+        // lookup the correct route
+        let Some(send_to) = self.solve_route(&sent_from) else {
+            // drop the packet
+            debug!("DROP");
+            return Ok(());
+        };
+
+        // let connection = self.active.entry(sent_from).or_insert_with(|| {
+        //     let connection = Connection::new(sent_from, Arc::clone(&self.socket)).await?;
+        // });
+
+        // let connection =  self.active.get(send_to).unwrap_or_else(Connection::new(sent_from, Arc::clone(&self.socket)));
+
+        // get a handle on the connection
+        let connection: Arc<Connection> = if let Some(active) = self.active.get(&send_to) {
+            active.value().clone()
+        } else {
+            let connection = Connection::new(Arc::clone(&self.socket), *send_to).await?;
+            let connection: Arc<Connection> = Arc::new(connection);
+
+            self.active.insert(sent_from, connection.clone());
+            connection
+        };
+
+        // send the bytes to the server
+        let sent_size = connection.send(bytes).await?;
+        debug!("SENT; LOCATION: {:?}, LEN: {sent_size}", connection.receive_from);
+
+        Ok(())
+    }
 }
-
-
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
-    let socket = UdpSocket::bind("0.0.0.0:8080").await?;
+    // start logging
+    env_logger::Builder::new()
+        .filter_level(log::LevelFilter::Debug)
+        .init();
     
+    let socket = Socket::bind("127.0.0.1:5000").await?
+        .route("127.0.0.1:7000".parse().unwrap(), "127.0.0.1:6000".parse().unwrap());
+
+    let mut buf = BytesMut::with_capacity(2048); // this is slow
+
     loop {
-        socket.readable().await?;
-        
-        let mut buf = [0; 1024];
-        let buf_length = match socket.try_recv(&mut buf) {
-            Ok(length) => length,
+        socket.socket().readable().await?;
+
+        let udp_socket = socket.socket();
+        // todo: cache buffer size to determine when to shrink
+        let (length, from) = match udp_socket.try_recv_buf_from(&mut buf) {
+            Ok((length, from)) => (length, from),
             Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => continue,
             Err(e) => return Err(e),
         };
-        
-        println!("RECV: {:?}", &buf[..buf_length])
+
+        debug!("RECV; FROM {:?}, LEN: {length}, DATA {:?}", from, &buf[..length]);
+
+        let bytes = &buf[..length];
+        socket.send(from, &bytes[..length]).await?;
+
+        buf.resize(2048, 0x0); // shrink buffer incase it has been expanded
     }
-    
+
     Ok(())
 }
 
