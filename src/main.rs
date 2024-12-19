@@ -10,7 +10,8 @@ use dashmap::DashMap;
 use futures::future::join_all;
 use log::{debug, error, info, warn};
 use std::collections::{HashMap, HashSet};
-use std::net::SocketAddr;
+use std::hash::Hash;
+use std::net::{SocketAddr, UdpSocket as DontUseUdpSocket};
 use std::sync::Arc;
 use clap::Parser;
 use tokio::net::UdpSocket;
@@ -20,7 +21,8 @@ use crate::args::Cli;
 use crate::configure::Config;
 
 use std::os::unix::io::AsRawFd;
-use crate::router::Router;
+use tokio::io::Interest;
+// use crate::router::Router;
 
 /// Sets the `IP_TRANSPARENT` option for a given `UdpSocket`
 fn set_ip_transparent(socket: &UdpSocket) -> io::Result<()> {
@@ -148,55 +150,140 @@ fn set_unlimited_resource() -> io::Result<()> {
     Ok(())
 }
 
-#[tokio::main(flavor = "multi_thread", worker_threads = 10)]
-async fn main() -> io::Result<()> {
-    // env_logger::init();
-    env_logger::Builder::new()
-        .filter_level(log::LevelFilter::Debug)
-        .init();
+struct Connection {
+    remote_sock: UdpSocket, 
+    send_to: SocketAddr,
     
-    let cli = Cli::parse();
+    local_sock: Arc<UdpSocket>,
+    receive_from: SocketAddr,
+    // maybe store a ref to the buffer pool
+    // we will need a list of valid return addresses
+}
 
-    let config = Config::load_file(cli.config_file).await?;
-    let router = config.router();
-    
-    // by default yes
-    if cli.unlimited_resource {
-        set_unlimited_resource()?;
-    }
+impl Connection {
+    async fn new(send_to: SocketAddr, local_sock: Arc<UdpSocket>) -> io::Result<Connection> {
+        // get the address of the local socket
+        // tiny bit of unnecessary overhead here
+        let receive_from = local_sock.local_addr()?; 
+        
+        // todo: maybe specify a way in the config to send from particular socket
+        // bind the output socket; we dont care where it comes from 
+        let remote_sock = UdpSocket::bind("0.0.0.0:0").await?;
 
-    debug!("found routes: forward: {}, backwards: {}", router.get_forward_routes().len(), router.get_backward_routes().len());
+        Ok(Connection {
+            remote_sock,
+            send_to,
 
-    // bind all required sockets
-    let sockets = bind_sockets(Router::required_sockets(router.get_forward_routes())).await;
-    debug!("bound {} sockets", sockets.len());
-
-    info!("udp proxy server starting");
-    // shared state
-
-    // let router_map = Arc::new(router.to_routes()); // Own the rooter map. It is now immutable
-    
-    let (forwards_routes, backwards_routes) = router.to_forward_backward_routes();
-    let (forwards_routes, backwards_routes) = (Arc::new(forwards_routes), Arc::new(backwards_routes));
-    
-    // let client_map = Arc::new(DashMap::<SocketAddr, SocketAddr>::new());
-    let buf_pool = Arc::new(Semaphore::new(config.buffer_pool_permits)); // Buffer pool
-
-    // spawn a forwarding task for each socket
-    for socket in sockets {
-        let forwards_routes = Arc::clone(&forwards_routes);
-        let backwards_routes = Arc::clone(&forwards_routes);
-        // let client_map = Arc::clone(&client_map);
-        let buf_pool = Arc::clone(&buf_pool);
-        tokio::spawn(async move {
-            if let Err(e) = forward_task(socket, forwards_routes, backwards_routes, buf_pool).await {
-                warn!("Forward task error: {}", e);
-            }
-        });
-    }
-
-    // the main task can now wait forever
-    loop {
-        tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            receive_from,
+            local_sock,
+        })
     }
 }
+
+struct Socket {
+    // Arc<T> because we need to share to timeout thread
+    active: Arc<HashMap<SocketAddr, Arc<Connection>>>, // active connections to the socket
+    routes: HashMap<SocketAddr, SocketAddr>, // C:x -> S:y
+    pub socket: Arc<UdpSocket>
+}
+
+impl Socket {
+    pub async fn bind(addr: SocketAddr) -> io::Result<Socket> {
+        let socket = UdpSocket::bind(addr).await?;
+        let socket = Arc::new(socket);
+
+        Ok(Self {
+            socket,
+            active: Arc::new(HashMap::new()),
+            routes: HashMap::new(), // start with empty routing table
+        })
+    }
+    
+    pub fn add_route(&mut self, from_addr: SocketAddr, to_addr: SocketAddr) {
+        // create the route
+        self.routes.insert(from_addr, to_addr);
+    }
+    
+    pub fn route(mut self, from_addr: SocketAddr, to_addr: SocketAddr) -> Self {
+        self.add_route(from_addr, to_addr);
+        self
+    }
+}
+
+
+
+#[tokio::main]
+async fn main() -> io::Result<()> {
+    let socket = UdpSocket::bind("0.0.0.0:8080").await?;
+    
+    loop {
+        socket.readable().await?;
+        
+        let mut buf = [0; 1024];
+        let buf_length = match socket.try_recv(&mut buf) {
+            Ok(length) => length,
+            Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => continue,
+            Err(e) => return Err(e),
+        };
+        
+        println!("RECV: {:?}", &buf[..buf_length])
+    }
+    
+    Ok(())
+}
+
+// map error case
+
+// #[tokio::main(flavor = "multi_thread", worker_threads = 10)]
+// async fn main() -> io::Result<()> {
+//     // env_logger::init();
+//     env_logger::Builder::new()
+//         .filter_level(log::LevelFilter::Debug)
+//         .init();
+//
+//     let cli = Cli::parse();
+//
+//     let config = Config::load_file(cli.config_file).await?;
+//     let router = config.router();
+//
+//     // by default yes
+//     if cli.unlimited_resource {
+//         set_unlimited_resource()?;
+//     }
+//
+//     debug!("found routes: forward: {}, backwards: {}", router.get_forward_routes().len(), router.get_backward_routes().len());
+//
+//     // bind all required sockets
+//     let sockets = bind_sockets(Router::required_sockets(router.get_forward_routes())).await;
+//     debug!("bound {} sockets", sockets.len());
+//
+//     info!("udp proxy server starting");
+//     // shared state
+//
+//     // let router_map = Arc::new(router.to_routes()); // Own the rooter map. It is now immutable
+//
+//     let (forwards_routes, backwards_routes) = router.to_forward_backward_routes();
+//     let (forwards_routes, backwards_routes) = (Arc::new(forwards_routes), Arc::new(backwards_routes));
+//
+//     // let client_map = Arc::new(DashMap::<SocketAddr, SocketAddr>::new());
+//     let buf_pool = Arc::new(Semaphore::new(config.buffer_pool_permits)); // Buffer pool
+//
+//     // spawn a forwarding task for each socket
+//     for socket in sockets {
+//         let forwards_routes = Arc::clone(&forwards_routes);
+//         let backwards_routes = Arc::clone(&forwards_routes);
+//         // let client_map = Arc::clone(&client_map);
+//         let buf_pool = Arc::clone(&buf_pool);
+//         tokio::spawn(async move {
+//             if let Err(e) = forward_task(socket, forwards_routes, backwards_routes, buf_pool).await {
+//                 warn!("Forward task error: {}", e);
+//             }
+//         });
+//     }
+//
+//     // the main task can now wait forever
+//     loop {
+//         tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+//     }
+// }
+// mb proposal to type labels

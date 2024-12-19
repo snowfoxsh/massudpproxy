@@ -1,6 +1,6 @@
 # run --help for help
 # rememebr to run in release mode `cargo run --release -- -c my_other_config.toml`
-# enable debugging (no release) `RUST_LOG=debug cargo run` 
+# enable debugging (no release) `RUST_LOG=debug cargo run`
 # to build using cargo run `cargo build --release`
 # the bin will be target/release/massudpproxy
 
@@ -71,3 +71,5 @@ remote_addr = "127.0.0.1"
 local_port_range = [5000, 5009]
 remote_port_range = [6000, 6009]
 
+# a -> z , z -> a
+# every map is two queues two sockets
