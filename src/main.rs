@@ -152,11 +152,11 @@ fn set_unlimited_resource() -> io::Result<()> {
 }
 
 struct Connection {
-    remote_sock: UdpSocket,
+    send_socket: UdpSocket,
     send_to: SocketAddr,
 
-    local_sock: Arc<UdpSocket>,
-    receive_from: SocketAddr,
+    recv_socket: Arc<UdpSocket>,
+    recv_from: SocketAddr,
     // maybe store a ref to the buffer pool
     // we will need a list of valid return addresses
 }
@@ -172,28 +172,28 @@ impl Connection {
         let remote_sock = UdpSocket::bind("0.0.0.0:0").await?;
 
         Ok(Connection {
-            remote_sock,
+            send_socket: remote_sock,
             send_to,
 
-            receive_from,
-            local_sock,
+            recv_from: receive_from,
+            recv_socket: local_sock,
         })
     }
 
     async fn send(&self, bytes: &[u8]) -> io::Result<usize> {
-        self.remote_sock.send_to(bytes, self.send_to).await
+        self.send_socket.send_to(bytes, self.send_to).await
     }
 }
 
-struct Socket {
+struct Stream {
     // Arc<T> because we need to share to timeout thread
     active: Arc<DashMap<SocketAddr, Arc<Connection>>>, // active connections to the socket
     routes: DashMap<SocketAddr, SocketAddr>,           // C:x -> S:y
     socket: Arc<UdpSocket>,
 }
 
-impl Socket {
-    pub async fn bind<A: ToSocketAddrs>(addr: A) -> io::Result<Socket> {
+impl Stream {
+    pub async fn bind<A: ToSocketAddrs>(addr: A) -> io::Result<Stream> {
         let socket = UdpSocket::bind(addr).await?;
         let socket = Arc::new(socket);
 
@@ -238,12 +238,6 @@ impl Socket {
             return Ok(());
         };
 
-        // let connection = self.active.entry(sent_from).or_insert_with(|| {
-        //     let connection = Connection::new(sent_from, Arc::clone(&self.socket)).await?;
-        // });
-
-        // let connection =  self.active.get(send_to).unwrap_or_else(Connection::new(sent_from, Arc::clone(&self.socket)));
-
         // get a handle on the connection
         let connection: Arc<Connection> = if let Some(active) = self.active.get(&send_to) {
             active.value().clone()
@@ -257,7 +251,7 @@ impl Socket {
 
         // send the bytes to the server
         let sent_size = connection.send(bytes).await?;
-        debug!("SENT; LOCATION: {:?}, LEN: {sent_size}", connection.receive_from);
+        debug!("SENT; LOCATION: {:?}, LEN: {sent_size}", connection.recv_from);
 
         Ok(())
     }
@@ -270,15 +264,15 @@ async fn main() -> io::Result<()> {
         .filter_level(log::LevelFilter::Debug)
         .init();
     
-    let socket = Socket::bind("127.0.0.1:5000").await?
+    let stream = Stream::bind("127.0.0.1:5000").await?
         .route("127.0.0.1:7000".parse().unwrap(), "127.0.0.1:6000".parse().unwrap());
 
     let mut buf = BytesMut::with_capacity(2048); // this is slow
 
     loop {
-        socket.socket().readable().await?;
+        stream.socket().readable().await?;
 
-        let udp_socket = socket.socket();
+        let udp_socket = stream.socket();
         // todo: cache buffer size to determine when to shrink
         let (length, from) = match udp_socket.try_recv_buf_from(&mut buf) {
             Ok((length, from)) => (length, from),
@@ -288,14 +282,15 @@ async fn main() -> io::Result<()> {
 
         debug!("RECV; FROM {:?}, LEN: {length}, DATA {:?}", from, &buf[..length]);
 
-        let bytes = &buf[..length];
-        socket.send(from, &bytes[..length]).await?;
+        stream.send(from, &buf[..length]).await?;
 
         buf.resize(2048, 0x0); // shrink buffer incase it has been expanded
     }
 
     Ok(())
 }
+
+// todo: test a bunch of packet sizes | from a remote host
 
 // map error case
 
